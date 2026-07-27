@@ -1,6 +1,9 @@
+
+
 /**
  * Begena Simulator Engine Architecture
- * Multi-mode Synthesis, Real-time Visualizer & Custom Performance Tracker
+ * Multi-mode Synthesis, Real-time Visualizer, Custom Performance Tracker
+ * & WebM Audio / JSON Sequence Exporter
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -14,6 +17,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let bassFilterNode = null;
     let trebleFilterNode = null;
 
+    // AUDIO EXPORTING NODES & BUFFERS
+    let mediaStreamDestination = null;
+    let mediaRecorder = null;
+    let recordedAudioChunks = [];
+    let recordedAudioBlob = null;
+
     let isMuted = false;
     let isRecording = false;
     let recordingStartTime = 0;
@@ -24,7 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let autoDemoIntervalId = null;
 
     // AUDIO TUNING MAPS (Traditional Tizita Minor Base Frequencies Configuration)
-    // Map of 10 traditional Begena strings from left to right (Deep meditative Bass base register)
+    // 10 traditional Begena strings from left to right (Deep meditative Bass base register)
     const baseFrequencies = [
         55.00,  // String 1: A1
         65.41,  // String 2: C2
@@ -90,6 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // CANVAS HANDLING CONFIGURATION
     function resizeCanvas() {
+        if (!canvas) return;
         canvas.width = canvas.parentElement.clientWidth;
         canvas.height = canvas.parentElement.clientHeight;
     }
@@ -132,11 +142,17 @@ document.addEventListener('DOMContentLoaded', () => {
         reverbGainNode = audioCtx.createGain();
         reverbGainNode.gain.setValueAtTime(parseFloat(document.getElementById('reverb-level').value) * 0.4, audioCtx.currentTime);
 
+        // Media Stream Node for Recording Live Output Audio
+        mediaStreamDestination = audioCtx.createMediaStreamDestination();
+
         // PIPELINE CROSS CONNECTIONS
         masterGainNode.connect(bassFilterNode);
         bassFilterNode.connect(trebleFilterNode);
         trebleFilterNode.connect(analyserNode);
         analyserNode.connect(audioCtx.destination);
+
+        // ROUTE MASTER TO MEDIA STREAM FOR FILE DOWNLOADS
+        trebleFilterNode.connect(mediaStreamDestination);
 
         // Parallel processing loops for Echo and Gizit overtones
         trebleFilterNode.connect(echoDelayNode);
@@ -160,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const currentTimestamp = audioCtx ? audioCtx.currentTime : 0;
         const targetFrequency = currentFrequencies[index];
 
-        // Track and cache recordings gracefully
+        // Track and cache note timings
         if (isRecording) {
             recordedEvents.push({
                 time: Date.now() - recordingStartTime,
@@ -175,16 +191,15 @@ document.addEventListener('DOMContentLoaded', () => {
             void trackElement.offsetWidth; // Force reflow trigger
             trackElement.classList.add('vibrating');
 
-            // Instantiation of the procedural particle ripple element
+            // Instantiation of procedural particle ripple
             if (document.body.getAttribute('data-animations') === 'true') {
                 const ripple = document.createElement('div');
-                ripple.classList.add('string-ripple');
                 ripple.className = 'string-ripple-effect';
                 trackElement.appendChild(ripple);
                 setTimeout(() => ripple.remove(), 600);
             }
 
-            // Duration handling aligned safely to current mode
+            // Duration handling aligned to play mode
             const currentMode = playModeSelector.value;
             let decayLimit = 2.2;
             if (currentMode === 'performance') decayLimit = 3.5;
@@ -248,7 +263,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const currentMetric = visualizerDataArray[i];
             const computedHeight = (currentMetric / 255) * canvas.height * 0.7;
 
-            // Paint elegant glowing custom design patterns
+            // Paint glowing design patterns
             canvasCtx.fillStyle = `rgba(252, 209, 22, ${currentMetric / 255 * 0.4})`;
             canvasCtx.fillRect(axisX, canvas.height - computedHeight, pieceWidth - 1, computedHeight);
             
@@ -256,7 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // APPLICATION KEYBOARD INTERACTION GATEWAY
+    // KEYBOARD EVENT LISTENERS
     window.addEventListener('keydown', (e) => {
         if (e.repeat) return;
         const targetKeyIdx = keyMappings.indexOf(e.key);
@@ -335,25 +350,66 @@ document.addEventListener('DOMContentLoaded', () => {
         e.target.style.background = isMuted ? "var(--primary-red)" : "rgba(255,255,255,0.06)";
     });
 
-    // PERFORMANCE SESSION RECORDING ALGORITHMS
+    // PERFORMANCE RECORDING & AUDIO/JSON DOWNLOAD ALGORITHMS
     const recBtn = document.getElementById('record-btn');
     const stopBtn = document.getElementById('stop-btn');
     const playRecBtn = document.getElementById('playback-btn');
     const clearRecBtn = document.getElementById('clear-rec-btn');
 
+    // Dynamically build Download Button if missing in HTML
+    let downloadBtn = document.getElementById('download-btn');
+    if (!downloadBtn && recBtn && recBtn.parentElement) {
+        downloadBtn = document.createElement('button');
+        downloadBtn.id = 'download-btn';
+        downloadBtn.className = 'rec-btn';
+        downloadBtn.innerText = '💾 Save Audio';
+        downloadBtn.disabled = true;
+        recBtn.parentElement.appendChild(downloadBtn);
+    }
+
     recBtn.addEventListener('click', () => {
+        if (!audioCtx) setupAudioPipeline();
+
         isRecording = true;
         recordedEvents = [];
+        recordedAudioChunks = [];
         recordingStartTime = Date.now();
+
+        // Initialize MediaRecorder over audio pipeline destination
+        try {
+            mediaRecorder = new MediaRecorder(mediaStreamDestination.stream);
+            
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) {
+                    recordedAudioChunks.push(e.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                recordedAudioBlob = new Blob(recordedAudioChunks, { type: 'audio/webm' });
+                if (downloadBtn) downloadBtn.disabled = false;
+            };
+
+            mediaRecorder.start();
+        } catch (err) {
+            console.warn("MediaRecorder unavailable in current context:", err);
+        }
+
         recBtn.classList.add('recording');
         recBtn.disabled = true;
         stopBtn.disabled = false;
         playRecBtn.disabled = true;
         clearRecBtn.disabled = true;
+        if (downloadBtn) downloadBtn.disabled = true;
     });
 
     stopBtn.addEventListener('click', () => {
         isRecording = false;
+
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+        }
+
         recBtn.classList.remove('recording');
         recBtn.disabled = false;
         stopBtn.disabled = true;
@@ -377,9 +433,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     clearRecBtn.addEventListener('click', () => {
         recordedEvents = [];
+        recordedAudioChunks = [];
+        recordedAudioBlob = null;
         playRecBtn.disabled = true;
         clearRecBtn.disabled = true;
+        if (downloadBtn) downloadBtn.disabled = true;
     });
+
+    // TRIGGER DOWNLOAD OF THE WEBM AUDIO FILE
+    if (downloadBtn) {
+        downloadBtn.addEventListener('click', () => {
+            if (!recordedAudioBlob) return;
+
+            const url = URL.createObjectURL(recordedAudioBlob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = `begena-performance-${Date.now()}.webm`;
+            document.body.appendChild(anchor);
+            anchor.click();
+
+            // Clean up memory space
+            setTimeout(() => {
+                document.body.removeChild(anchor);
+                URL.revokeObjectURL(url);
+            }, 100);
+        });
+    }
 
     // METRONOME & GENERATIVE COMPOSITION ENGINE MODULES
     document.getElementById('metronome-toggle').addEventListener('click', (e) => {
@@ -387,7 +466,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isMetronomeOn) {
             e.target.innerText = "Metronome ON";
             e.target.style.color = "var(--primary-gold)";
-            const tempoBpm = parseInt(document.getElementById('metronome-tempo').value);
+            const tempoBpm = parseInt(document.getElementById('metronome-tempo').value) || 72;
             const rateInterval = (60 / tempoBpm) * 1000;
             
             metronomeIntervalId = setInterval(() => {
