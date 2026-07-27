@@ -1,29 +1,56 @@
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Begena: Ethiopian Traditional Music Instrument Simulator</title>
-    <link rel="stylesheet" href="./css/style.css">
+    <!-- Primary Search Engine Meta Tags -->
+    <title>በገና (Begena) - Traditional Ethiopian Stringed Instrument</title>
+    <meta name="title" content="በገና (Begena) - Traditional Ethiopian Stringed Instrument">
+    <meta name="description" content="Explore the history, sacred tunes, and spiritual heritage of the Begena (በገና), the ten-stringed Ethiopian lyre. Learn tuning, history, and sacred music.">
+    <meta name="keywords" content="Begena, በገና, Ethiopian lyre, spiritual music, Habesha culture, traditional Ethiopian instrument, King David lyre, Ethiopian Orthodox music">
+    <meta name="author" content="Begena Project">
+    <meta name="robots" content="index, follow">
+
+   
+   
+    <title>Begena web app </title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" type="image/png" href="images/image.png">
 </head>
 <body data-theme="traditional" data-animations="true">
     <header class="app-header">
         <div class="logo-container">
-            <div class="habesha-pattern-strip"></div>
+      
+            <div class="habesha-pattern-strip">   
+            </div>
+                  <img src="images/image.png" alt="Begena Logo" class="site-logo">
             <h1 class="animated-title">በገና <span class="en-title">Begena</span></h1>
         </div>
-        <nav class="main-nav">
+
+        <!-- Hamburger Icon Button for Mobile Nav -->
+        <button id="hamburger-btn" class="hamburger-toggle" aria-label="Toggle Navigation Menu">
+            <span class="bar"></span>
+            <span class="bar"></span>
+            <span class="bar"></span>
+        </button>
+
+        <!-- Main Navigation (Responsive Drawer) -->
+        <nav class="main-nav" id="main-nav">
             <button class="nav-btn active" data-target="home-section">Home</button>
             <button class="nav-btn" data-target="simulator-section">Simulator</button>
             <button class="nav-btn" data-target="about-section">About</button>
             <button class="nav-btn" data-target="help-section">Help</button>
         </nav>
+
         <div class="global-controls">
             <button id="fullscreen-btn" aria-label="Toggle Fullscreen">⛶ Fullscreen</button>
         </div>
     </header>
 
     <main class="main-content">
+        <!-- HOME / LANDING SECTION -->
         <section id="home-section" class="content-section active">
             <div class="hero-container">
                 <div class="hero-text">
@@ -44,9 +71,16 @@
             </div>
         </section>
 
+        <!-- SIMULATOR SECTION -->
         <section id="simulator-section" class="content-section">
+            <!-- Mobile Toggle Button for Control Panel -->
+            <div class="mobile-panel-toggle-bar">
+                <button id="toggle-panel-btn" class="secondary-btn panel-toggle-btn">⚙ Controls & Tuning Panel</button>
+            </div>
+
             <div class="simulator-grid">
-                <aside class="control-panel glass-card">
+                <!-- Instrument Control Sidebar (Collapsible on Mobile) -->
+                <aside class="control-panel glass-card" id="control-panel">
                     <div class="panel-section">
                         <h3>Configuration</h3>
                         <div class="control-group">
@@ -122,7 +156,7 @@
                             <button id="record-btn" class="rec-btn">● Record</button>
                             <button id="stop-btn" class="rec-btn" disabled>■ Stop</button>
                             <button id="playback-btn" class="rec-btn" disabled>▶ Playback</button>
-                            <button id="download-btn" class="rec-btn" disabled>💾 Download Audio</button>
+                            <button id="download-btn" class="rec-btn" disabled>💾 Save Audio</button>
                             <button id="clear-rec-btn" class="rec-btn" disabled>Clear</button>
                         </div>
                     </div>
@@ -147,18 +181,21 @@
                     </div>
                 </aside>
 
+                <!-- Core Instrument Display -->
                 <div class="instrument-container glass-card">
                     <canvas id="visualizer-canvas" class="sound-visualizer"></canvas>
                     <div class="begena-frame">
                         <div class="top-bar-wood"></div>
                         <div class="strings-container" id="strings-wrapper">
-                            </div>
+                            <!-- Generated Dynamically via JS -->
+                        </div>
                         <div class="bottom-bridge-wood"></div>
                     </div>
                 </div>
             </div>
         </section>
 
+        <!-- ABOUT SECTION -->
         <section id="about-section" class="content-section">
             <div class="text-layout-wrapper glass-card">
                 <h2>About the Begena (በገና)</h2>
@@ -170,11 +207,14 @@
                 <p>Constructed typically with 10 heavy gut strings stretching across a large rectangular wooden resonator box, the Begena stands close to a meter tall. Uniquely, small pieces of leather or wood called <em>Gizit</em> are positioned between each string and the wide bridge. This creates an intentional, distinct buzzing hum upon plucking, serving as a continuous acoustic drone loaded with overtones.</p>
                 
                 <h3>Cultural Value</h3>
+                
                 <p>Unlike instruments geared towards polyphonic complexity or high-tempo dancing rhythms, the Begena demands patient deceleration. Its traditional scales (primarily <em>Tizita Minor</em> or dedicated spiritual sub-modes) promote profound concentration, scriptural prayer rendering, and meditative isolation.</p>
-                <h2 class="author">develop by Tadesse A</h2>
+                <h2 class="author">developed by Tadesse A</h2>
             </div>
+
         </section>
 
+        <!-- HELP SECTION -->
         <section id="help-section" class="content-section">
             <div class="text-layout-wrapper glass-card">
                 <h2>User Guide & Control Matrix</h2>
@@ -212,10 +252,9 @@
     </main>
 
     <footer class="app-footer">
-        <p>&copy; 2026 Begena Simulator wep app. </p>
-        
+        <p>&copy; 2026 Begena Simulator web application. </p>
     </footer>
 
-    <script src="./js/script.js"></script>
+    <script src="js/script.js"></script>
 </body>
 </html>

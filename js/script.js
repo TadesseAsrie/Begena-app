@@ -1,537 +1,483 @@
 
 
 /**
- * Begena Simulator Engine Architecture
- * Multi-mode Synthesis, Real-time Visualizer, Custom Performance Tracker
- * & WebM Audio / JSON Sequence Exporter
+ * Begena Web Simulator
+ * Native Web Audio API Synthesizer with Gizit Buzzing Overtones & Audio Recorder
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-    // SYSTEM ARCHITECTURE VARIABLES
+    // ==========================================
+    // 1. STATE MANAGEMENT & GLOBALS
+    // ==========================================
     let audioCtx = null;
-    let masterGainNode = null;
-    let reverbDelayNode = null;
-    let reverbGainNode = null;
-    let echoDelayNode = null;
-    let echoGainNode = null;
-    let bassFilterNode = null;
-    let trebleFilterNode = null;
-
-    // AUDIO EXPORTING NODES & BUFFERS
-    let mediaStreamDestination = null;
+    let masterGain = null;
+    let reverbGain = null;
+    let bassFilter = null;
+    let trebleFilter = null;
     let mediaRecorder = null;
-    let recordedAudioChunks = [];
-    let recordedAudioBlob = null;
-
+    let recordedChunks = [];
+    let audioBlobUrl = null;
+    
     let isMuted = false;
     let isRecording = false;
-    let recordingStartTime = 0;
-    let recordedEvents = [];
-    let playbackTimeoutIds = [];
-    let metronomeIntervalId = null;
+    let metronomeInterval = null;
     let isMetronomeOn = false;
-    let autoDemoIntervalId = null;
+    let demoInterval = null;
+    let isDemoRunning = false;
+    let pitchOffsetSemitones = 0;
 
-    // AUDIO TUNING MAPS (Traditional Tizita Minor Base Frequencies Configuration)
-    // 10 traditional Begena strings from left to right (Deep meditative Bass base register)
-    const baseFrequencies = [
-        55.00,  // String 1: A1
-        65.41,  // String 2: C2
-        73.42,  // String 3: D2
-        82.41,  // String 4: E2
-        98.00,  // String 5: G2
-        110.00, // String 6: A2
-        130.81, // String 7: C3
-        146.83, // String 8: D3
-        164.81, // String 9: E3
-        196.00  // String 10: G3
+    // Begena 10-String Pentatonic Scale Frequencies (Base Hz)
+    const BASE_FREQUENCIES = [
+        110.00, // String 1: A2
+        123.47, // String 2: B2
+        138.59, // String 3: C#3
+        164.81, // String 4: E3
+        185.00, // String 5: F#3
+        220.00, // String 6: A3
+        246.94, // String 7: B3
+        277.18, // String 8: C#3
+        329.63, // String 9: E3
+        369.99  // String 10: F#3
     ];
-    
-    // Runtime frequency maps allowing global manipulation via transposition arrays
-    let currentFrequencies = [...baseFrequencies];
-    const keyMappings = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
 
-    // RENDERING SYSTEM & AUDIO VISUALIZER CORE
-    const canvas = document.getElementById('visualizer-canvas');
-    const canvasCtx = canvas.getContext('2d');
-    let analyserNode = null;
-    let visualizerBufferLength = 0;
-    let visualizerDataArray = null;
+    const KEY_MAPPINGS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
 
-    // DOM HOOKS
+    // DOM Elements
     const stringsWrapper = document.getElementById('strings-wrapper');
+    const visualizerCanvas = document.getElementById('visualizer-canvas');
+    const canvasCtx = visualizerCanvas ? visualizerCanvas.getContext('2d') : null;
+
+    // UI Inputs & Controls
     const themeSelector = document.getElementById('theme-selector');
-    const playModeSelector = document.getElementById('play-mode');
-    const animationToggle = document.getElementById('toggle-animations');
+    const masterVolInput = document.getElementById('master-volume');
+    const reverbInput = document.getElementById('reverb-level');
+    const bassInput = document.getElementById('eq-bass');
+    const trebleInput = document.getElementById('treble-level') || document.getElementById('eq-treble');
+    const muteBtn = document.getElementById('mute-btn');
+    const animCheckbox = document.getElementById('toggle-animations');
 
-    // INITIALIZATION & DYNAMIC LAYOUT GENERATION
-    function initializeStructure() {
-        stringsWrapper.innerHTML = '';
-        currentFrequencies.forEach((freq, idx) => {
-            const track = document.createElement('div');
-            track.classList.add('begena-string-track');
-            track.dataset.index = idx;
-            track.setAttribute('role', 'button');
-            track.setAttribute('aria-label', `Begena String ${idx + 1}, Key ${keyMappings[idx]}`);
-            
-            // Generate proportional traditional thickness variables
-            const calculatedThickness = 4.5 - (idx * 0.3);
-            track.style.setProperty('--string-thickness', `${calculatedThickness}px`);
+    const tuneDownBtn = document.getElementById('tune-down');
+    const tuneResetBtn = document.getElementById('tune-reset');
+    const tuneUpBtn = document.getElementById('tune-up');
+    const octaveShiftInput = document.getElementById('octave-shift');
 
-            const stringLine = document.createElement('div');
-            stringLine.classList.add('string-element');
-
-            const badge = document.createElement('div');
-            badge.classList.add('string-badge');
-            badge.innerText = keyMappings[idx];
-
-            track.appendChild(stringLine);
-            track.appendChild(badge);
-            stringsWrapper.appendChild(track);
-
-            // INPUT CONTROLLERS HOOKUP
-            track.addEventListener('mousedown', (e) => { e.preventDefault(); triggerStringPluck(idx); });
-            track.addEventListener('mouseenter', (e) => { if (e.buttons === 1) triggerStringPluck(idx); });
-            track.addEventListener('touchstart', (e) => { e.preventDefault(); triggerStringPluck(idx); });
-        });
-        resizeCanvas();
-    }
-
-    // CANVAS HANDLING CONFIGURATION
-    function resizeCanvas() {
-        if (!canvas) return;
-        canvas.width = canvas.parentElement.clientWidth;
-        canvas.height = canvas.parentElement.clientHeight;
-    }
-    window.addEventListener('resize', () => { resizeCanvas(); });
-
-    // WEB AUDIO SYNTHESIS COMPLEX SUB-SYSTEM ENGINE
-    function setupAudioPipeline() {
-        if (audioCtx) return;
-
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        audioCtx = new AudioContextClass();
-
-        analyserNode = audioCtx.createAnalyser();
-        analyserNode.fftSize = 256;
-        visualizerBufferLength = analyserNode.frequencyBinCount;
-        visualizerDataArray = new Uint8Array(visualizerBufferLength);
-
-        masterGainNode = audioCtx.createGain();
-        masterGainNode.gain.setValueAtTime(parseFloat(document.getElementById('master-volume').value), audioCtx.currentTime);
-
-        // Bi-quad equalizers parameters mapping
-        bassFilterNode = audioCtx.createBiquadFilter();
-        bassFilterNode.type = 'lowshelf';
-        bassFilterNode.frequency.setValueAtTime(200, audioCtx.currentTime);
-        bassFilterNode.gain.setValueAtTime(parseFloat(document.getElementById('eq-bass').value), audioCtx.currentTime);
-
-        trebleFilterNode = audioCtx.createBiquadFilter();
-        trebleFilterNode.type = 'highshelf';
-        trebleFilterNode.frequency.setValueAtTime(2000, audioCtx.currentTime);
-        trebleFilterNode.gain.setValueAtTime(parseFloat(document.getElementById('eq-treble').value), audioCtx.currentTime);
-
-        // Simulation nodes setup
-        echoDelayNode = audioCtx.createDelay(2.0);
-        echoDelayNode.delayTime.setValueAtTime(parseFloat(document.getElementById('echo-delay').value) * 0.5, audioCtx.currentTime);
-        echoGainNode = audioCtx.createGain();
-        echoGainNode.gain.setValueAtTime(0.25, audioCtx.currentTime);
-
-        reverbDelayNode = audioCtx.createDelay(1.0);
-        reverbDelayNode.delayTime.setValueAtTime(0.04, audioCtx.currentTime); // Quick dense reflection
-        reverbGainNode = audioCtx.createGain();
-        reverbGainNode.gain.setValueAtTime(parseFloat(document.getElementById('reverb-level').value) * 0.4, audioCtx.currentTime);
-
-        // Media Stream Node for Recording Live Output Audio
-        mediaStreamDestination = audioCtx.createMediaStreamDestination();
-
-        // PIPELINE CROSS CONNECTIONS
-        masterGainNode.connect(bassFilterNode);
-        bassFilterNode.connect(trebleFilterNode);
-        trebleFilterNode.connect(analyserNode);
-        analyserNode.connect(audioCtx.destination);
-
-        // ROUTE MASTER TO MEDIA STREAM FOR FILE DOWNLOADS
-        trebleFilterNode.connect(mediaStreamDestination);
-
-        // Parallel processing loops for Echo and Gizit overtones
-        trebleFilterNode.connect(echoDelayNode);
-        echoDelayNode.connect(echoGainNode);
-        echoGainNode.connect(echoDelayNode); // Loop feedback
-        echoGainNode.connect(analyserNode);
-
-        trebleFilterNode.connect(reverbDelayNode);
-        reverbDelayNode.connect(reverbGainNode);
-        reverbGainNode.connect(reverbDelayNode);
-        reverbGainNode.connect(analyserNode);
-
-        renderSystemVisualizer();
-    }
-
-    // STRING RENDERING SYNTHESIZER PLUCK TRIGGER
-    function triggerStringPluck(index) {
-        if (!audioCtx) setupAudioPipeline();
-        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-
-        const currentTimestamp = audioCtx ? audioCtx.currentTime : 0;
-        const targetFrequency = currentFrequencies[index];
-
-        // Track and cache note timings
-        if (isRecording) {
-            recordedEvents.push({
-                time: Date.now() - recordingStartTime,
-                stringIndex: index
-            });
-        }
-
-        // VISUAL ANIMATION EMITTER
-        const trackElement = stringsWrapper.children[index];
-        if (trackElement) {
-            trackElement.classList.remove('vibrating');
-            void trackElement.offsetWidth; // Force reflow trigger
-            trackElement.classList.add('vibrating');
-
-            // Instantiation of procedural particle ripple
-            if (document.body.getAttribute('data-animations') === 'true') {
-                const ripple = document.createElement('div');
-                ripple.className = 'string-ripple-effect';
-                trackElement.appendChild(ripple);
-                setTimeout(() => ripple.remove(), 600);
-            }
-
-            // Duration handling aligned to play mode
-            const currentMode = playModeSelector.value;
-            let decayLimit = 2.2;
-            if (currentMode === 'performance') decayLimit = 3.5;
-            if (currentMode === 'practice') decayLimit = 1.2;
-
-            setTimeout(() => {
-                trackElement.classList.remove('vibrating');
-            }, (decayLimit * 1000));
-        }
-
-        if (isMuted || !audioCtx) return;
-
-        // MULTI-OSCILLATOR SYNTHESIS GENERATING AUTHENTIC BUZZ OVERTONES
-        const primaryOsc = audioCtx.createOscillator();
-        const buzzOsc = audioCtx.createOscillator();
-        const voiceGainNode = audioCtx.createGain();
-
-        // Emulate deep heavy string structure using Sawtooth mixed with Triangle waves
-        primaryOsc.type = 'triangle';
-        primaryOsc.frequency.setValueAtTime(targetFrequency, currentTimestamp);
-
-        buzzOsc.type = 'sawtooth';
-        buzzOsc.frequency.setValueAtTime(targetFrequency * 2.01, currentTimestamp); // Distort slightly for organic warmth
-
-        const buzzGain = audioCtx.createGain();
-        const structuralGizitFactor = parseFloat(document.getElementById('reverb-level').value);
-        buzzGain.gain.setValueAtTime(structuralGizitFactor * 0.35, currentTimestamp);
-
-        // ATTACK DECAY SUSTAIN RELEASE ENGINE SETUP
-        voiceGainNode.gain.setValueAtTime(0.0, currentTimestamp);
-        voiceGainNode.gain.linearRampToValueAtTime(0.8, currentTimestamp + 0.02); // Crisp Pluck Attack
-        voiceGainNode.gain.exponentialRampToValueAtTime(0.15, currentTimestamp + 0.4); // Natural Falloff
-        voiceGainNode.gain.exponentialRampToValueAtTime(0.001, currentTimestamp + 2.5); // Infinite Resonant Release
-
-        // INTERCONNECTIVITY PATHWAYS
-        buzzOsc.connect(buzzGain);
-        buzzGain.connect(voiceGainNode);
-        primaryOsc.connect(voiceGainNode);
-        
-        voiceGainNode.connect(masterGainNode);
-
-        primaryOsc.start(currentTimestamp);
-        buzzOsc.start(currentTimestamp);
-
-        primaryOsc.stop(currentTimestamp + 2.6);
-        buzzOsc.stop(currentTimestamp + 2.6);
-    }
-
-    // REAL-TIME CACHING GRAPHICS LOOP (60 FPS OPTIMIZED)
-    function renderSystemVisualizer() {
-        requestAnimationFrame(renderSystemVisualizer);
-        if (!analyserNode) return;
-
-        analyserNode.getByteFrequencyData(visualizerDataArray);
-        canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
-
-        const pieceWidth = (canvas.width / visualizerBufferLength) * 1.5;
-        let axisX = 0;
-
-        for (let i = 0; i < visualizerBufferLength; i++) {
-            const currentMetric = visualizerDataArray[i];
-            const computedHeight = (currentMetric / 255) * canvas.height * 0.7;
-
-            // Paint glowing design patterns
-            canvasCtx.fillStyle = `rgba(252, 209, 22, ${currentMetric / 255 * 0.4})`;
-            canvasCtx.fillRect(axisX, canvas.height - computedHeight, pieceWidth - 1, computedHeight);
-            
-            axisX += pieceWidth;
-        }
-    }
-
-    // KEYBOARD EVENT LISTENERS
-    window.addEventListener('keydown', (e) => {
-        if (e.repeat) return;
-        const targetKeyIdx = keyMappings.indexOf(e.key);
-        if (targetKeyIdx !== -1) {
-            triggerStringPluck(targetKeyIdx);
-        }
-    });
-
-    // EVENT DELEGATION NAVIGATION HANDLERS
-    document.querySelectorAll('.nav-btn, .action-trigger').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const destinationId = btn.getAttribute('data-target');
-            document.querySelectorAll('.content-section').forEach(sec => sec.classList.remove('active'));
-            document.querySelectorAll('.nav-btn').forEach(nb => nb.classList.remove('active'));
-
-            document.getElementById(destinationId).classList.add('active');
-            
-            const targetedNavBtn = document.querySelector(`.nav-btn[data-target="${destinationId}"]`);
-            if (targetedNavBtn) targetedNavBtn.classList.add('active');
-            
-            if (destinationId === 'simulator-section') resizeCanvas();
-        });
-    });
-
-    // RUNTIME INTERFACE HANDLERS CONTROLLING AUDIO CONSTANTS
-    themeSelector.addEventListener('change', (e) => {
-        document.body.setAttribute('data-theme', e.target.value);
-    });
-
-    animationToggle.addEventListener('change', (e) => {
-        document.body.setAttribute('data-animations', e.target.checked ? "true" : "false");
-    });
-
-    document.getElementById('master-volume').addEventListener('input', (e) => {
-        if (masterGainNode) masterGainNode.gain.setValueAtTime(parseFloat(e.target.value), audioCtx.currentTime);
-    });
-
-    document.getElementById('reverb-level').addEventListener('input', (e) => {
-        if (reverbGainNode) reverbGainNode.gain.setValueAtTime(parseFloat(e.target.value) * 0.4, audioCtx.currentTime);
-    });
-
-    document.getElementById('echo-delay').addEventListener('input', (e) => {
-        if (echoDelayNode) echoDelayNode.delayTime.setValueAtTime(parseFloat(e.target.value) * 0.5, audioCtx.currentTime);
-    });
-
-    document.getElementById('eq-bass').addEventListener('input', (e) => {
-        if (bassFilterNode) bassFilterNode.gain.setValueAtTime(parseFloat(e.target.value), audioCtx.currentTime);
-    });
-
-    document.getElementById('eq-treble').addEventListener('input', (e) => {
-        if (trebleFilterNode) trebleFilterNode.gain.setValueAtTime(parseFloat(e.target.value), audioCtx.currentTime);
-    });
-
-    // TRANSPOSITION & TUNING PANEL ACTIONS
-    document.getElementById('tune-up').addEventListener('click', () => {
-        currentFrequencies = currentFrequencies.map(f => f * 1.059463); // Shift up 1 semi-tone
-    });
-
-    document.getElementById('tune-down').addEventListener('click', () => {
-        currentFrequencies = currentFrequencies.map(f => f / 1.059463); // Shift down 1 semi-tone
-    });
-
-    document.getElementById('tune-reset').addEventListener('click', () => {
-        currentFrequencies = [...baseFrequencies];
-        document.getElementById('octave-shift').value = 0;
-    });
-
-    document.getElementById('octave-shift').addEventListener('input', (e) => {
-        const factor = Math.pow(2, parseInt(e.target.value));
-        currentFrequencies = baseFrequencies.map(f => f * factor);
-    });
-
-    document.getElementById('mute-btn').addEventListener('click', (e) => {
-        isMuted = !isMuted;
-        e.target.innerText = isMuted ? "Unmute Audio" : "Mute Audio";
-        e.target.style.background = isMuted ? "var(--primary-red)" : "rgba(255,255,255,0.06)";
-    });
-
-    // PERFORMANCE RECORDING & AUDIO/JSON DOWNLOAD ALGORITHMS
-    const recBtn = document.getElementById('record-btn');
+    const recordBtn = document.getElementById('record-btn');
     const stopBtn = document.getElementById('stop-btn');
-    const playRecBtn = document.getElementById('playback-btn');
+    const playbackBtn = document.getElementById('playback-btn');
+    const downloadBtn = document.getElementById('download-btn');
     const clearRecBtn = document.getElementById('clear-rec-btn');
 
-    // Dynamically build Download Button if missing in HTML
-    let downloadBtn = document.getElementById('download-btn');
-    if (!downloadBtn && recBtn && recBtn.parentElement) {
-        downloadBtn = document.createElement('button');
-        downloadBtn.id = 'download-btn';
-        downloadBtn.className = 'rec-btn';
-        downloadBtn.innerText = '💾 Save Audio';
-        downloadBtn.disabled = true;
-        recBtn.parentElement.appendChild(downloadBtn);
+    const metronomeToggle = document.getElementById('metronome-toggle');
+    const metronomeTempo = document.getElementById('metronome-tempo');
+    const demoBtn = document.getElementById('demo-btn');
+    const randomMelodyBtn = document.getElementById('random-melody-btn');
+
+    const hamburgerBtn = document.getElementById('hamburger-btn');
+    const mainNav = document.getElementById('main-nav');
+    const togglePanelBtn = document.getElementById('toggle-panel-btn');
+    const controlPanel = document.getElementById('control-panel');
+
+    // ==========================================
+    // 2. AUDIO ENGINE INITIALIZATION (WEB AUDIO API)
+    // ==========================================
+    function initAudioEngine() {
+        if (audioCtx) return;
+
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+
+        // Master Gain
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = parseFloat(masterVolInput ? masterVolInput.value : 0.7);
+
+        // EQ Filters
+        bassFilter = audioCtx.createBiquadFilter();
+        bassFilter.type = 'lowshelf';
+        bassFilter.frequency.value = 250;
+        bassFilter.gain.value = parseFloat(bassInput ? bassInput.value : 4);
+
+        trebleFilter = audioCtx.createBiquadFilter();
+        trebleFilter.type = 'highshelf';
+        trebleFilter.frequency.value = 2000;
+        trebleFilter.gain.value = parseFloat(trebleInput ? trebleInput.value : -2);
+
+        // Reverb / Buzz Simulation Gain Node
+        reverbGain = audioCtx.createGain();
+        reverbGain.gain.value = parseFloat(reverbInput ? reverbInput.value : 0.5);
+
+        // Signal Routing: Master -> EQ Bass -> EQ Treble -> Destination
+        masterGain.connect(bassFilter);
+        bassFilter.connect(trebleFilter);
+        trebleFilter.connect(audioCtx.destination);
+
+        startVisualizer();
     }
 
-    recBtn.addEventListener('click', () => {
-        if (!audioCtx) setupAudioPipeline();
-
-        isRecording = true;
-        recordedEvents = [];
-        recordedAudioChunks = [];
-        recordingStartTime = Date.now();
-
-        // Initialize MediaRecorder over audio pipeline destination
-        try {
-            mediaRecorder = new MediaRecorder(mediaStreamDestination.stream);
-            
-            mediaRecorder.ondataavailable = (e) => {
-                if (e.data.size > 0) {
-                    recordedAudioChunks.push(e.data);
-                }
-            };
-
-            mediaRecorder.onstop = () => {
-                recordedAudioBlob = new Blob(recordedAudioChunks, { type: 'audio/webm' });
-                if (downloadBtn) downloadBtn.disabled = false;
-            };
-
-            mediaRecorder.start();
-        } catch (err) {
-            console.warn("MediaRecorder unavailable in current context:", err);
+    // ==========================================
+    // 3. SOUND SYNTHESIS & BUZZ (GIZIT) SIMULATION
+    // ==========================================
+    function playStringSound(index) {
+        initAudioEngine();
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
         }
 
-        recBtn.classList.add('recording');
-        recBtn.disabled = true;
-        stopBtn.disabled = false;
-        playRecBtn.disabled = true;
-        clearRecBtn.disabled = true;
-        if (downloadBtn) downloadBtn.disabled = true;
-    });
-
-    stopBtn.addEventListener('click', () => {
-        isRecording = false;
-
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            mediaRecorder.stop();
-        }
-
-        recBtn.classList.remove('recording');
-        recBtn.disabled = false;
-        stopBtn.disabled = true;
-        if (recordedEvents.length > 0) {
-            playRecBtn.disabled = false;
-            clearRecBtn.disabled = false;
-        }
-    });
-
-    playRecBtn.addEventListener('click', () => {
-        playbackTimeoutIds.forEach(id => clearTimeout(id));
-        playbackTimeoutIds = [];
+        const now = audioCtx.currentTime;
+        const octaveShift = parseInt(octaveShiftInput ? octaveShiftInput.value : 0, 10);
+        const totalSemitones = pitchOffsetSemitones + (octaveShift * 12);
         
-        recordedEvents.forEach(evt => {
-            const id = setTimeout(() => {
-                triggerStringPluck(evt.stringIndex);
-            }, evt.time);
-            playbackTimeoutIds.push(id);
+        // Calculate adjusted pitch
+        const baseFreq = BASE_FREQUENCIES[index];
+        const targetFreq = baseFreq * Math.pow(2, totalSemitones / 12);
+
+        // Primary Oscillator (Sawtooth gives rich harmonics)
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(targetFreq, now);
+
+        // Gizit Buzz Oscillator (Slightly detuned for signature buzz)
+        const buzzOsc = audioCtx.createOscillator();
+        buzzOsc.type = 'triangle';
+        buzzOsc.frequency.setValueAtTime(targetFreq * 2.01, now);
+
+        // Sub-envelope for string decay
+        const noteGain = audioCtx.createGain();
+        noteGain.gain.setValueAtTime(0.8, now);
+        noteGain.gain.exponentialRampToValueAtTime(0.001, now + 3.5);
+
+        // Lowpass filter to mimic warm wooden body dampening
+        const lowpass = audioCtx.createBiquadFilter();
+        lowpass.type = 'lowpass';
+        lowpass.frequency.setValueAtTime(800, now);
+        lowpass.frequency.exponentialRampToValueAtTime(180, now + 3.0);
+
+        // Connect Oscillators
+        osc.connect(lowpass);
+        buzzOsc.connect(lowpass);
+        lowpass.connect(noteGain);
+        noteGain.connect(masterGain);
+
+        osc.start(now);
+        buzzOsc.start(now);
+        osc.stop(now + 3.6);
+        buzzOsc.stop(now + 3.6);
+
+        // Trigger visual effect on UI string
+        triggerStringAnimation(index);
+    }
+
+    // ==========================================
+    // 4. UI STRING GENERATION & INTERACTION
+    // ==========================================
+    function buildStringsUI() {
+        if (!stringsWrapper) return;
+        stringsWrapper.innerHTML = '';
+
+        for (let i = 0; i < 10; i++) {
+            const track = document.createElement('div');
+            track.className = 'begena-string-track';
+            track.dataset.index = i;
+
+            // Vary string thickness from thickest (bass) to thinnest
+            const thickness = 4.5 - (i * 0.25);
+            
+            const stringElem = document.createElement('div');
+            stringElem.className = 'string-element';
+            stringElem.style.setProperty('--string-thickness', `${thickness}px`);
+
+            const badge = document.createElement('div');
+            badge.className = 'string-badge';
+            badge.innerText = KEY_MAPPINGS[i];
+
+            track.appendChild(stringElem);
+            track.appendChild(badge);
+
+            // Click & Pointer Events
+            track.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                playStringSound(i);
+            });
+
+            // Touch Swipe Playability
+            track.addEventListener('pointerenter', (e) => {
+                if (e.buttons === 1) { // Left click or drag active
+                    playStringSound(i);
+                }
+            });
+
+            stringsWrapper.appendChild(track);
+        }
+    }
+
+    function triggerStringAnimation(index) {
+        if (animCheckbox && !animCheckbox.checked) return;
+
+        const tracks = stringsWrapper.querySelectorAll('.begena-string-track');
+        if (!tracks[index]) return;
+
+        const track = tracks[index];
+        track.classList.add('vibrating');
+
+        // Add ripple animation
+        const ripple = document.createElement('div');
+        ripple.className = 'string-ripple-effect';
+        track.appendChild(ripple);
+
+        setTimeout(() => {
+            track.classList.remove('vibrating');
+            if (ripple.parentNode) ripple.parentNode.removeChild(ripple);
+        }, 600);
+    }
+
+    // ==========================================
+    // 5. AUDIO RECORDING & WEBM EXPORT
+    // ==========================================
+    function startRecording() {
+        initAudioEngine();
+        recordedChunks = [];
+
+        const dest = audioCtx.createMediaStreamDestination();
+        masterGain.connect(dest);
+
+        mediaRecorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
+
+        mediaRecorder.ondataavailable = (evt) => {
+            if (evt.data.size > 0) {
+                recordedChunks.push(evt.data);
+            }
+        };
+
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+            if (audioBlobUrl) URL.revokeObjectURL(audioBlobUrl);
+            audioBlobUrl = URL.createObjectURL(blob);
+
+            if (playbackBtn) playbackBtn.disabled = false;
+            if (downloadBtn) downloadBtn.disabled = false;
+            if (clearRecBtn) clearRecBtn.disabled = false;
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+
+        if (recordBtn) {
+            recordBtn.classList.add('recording');
+            recordBtn.innerText = '● Recording...';
+            recordBtn.disabled = true;
+        }
+        if (stopBtn) stopBtn.disabled = false;
+    }
+
+    function stopRecording() {
+        if (mediaRecorder && isRecording) {
+            mediaRecorder.stop();
+            isRecording = false;
+
+            if (recordBtn) {
+                recordBtn.classList.remove('recording');
+                recordBtn.innerText = '● Record';
+                recordBtn.disabled = false;
+            }
+            if (stopBtn) stopBtn.disabled = true;
+        }
+    }
+
+    function downloadAudio() {
+        if (!audioBlobUrl) return;
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = audioBlobUrl;
+        a.download = `Begena_Performance_${Date.now()}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            document.body.removeChild(a);
+        }, 100);
+    }
+
+    // ==========================================
+    // 6. VISUALIZER CANVAS
+    // ==========================================
+    function startVisualizer() {
+        if (!visualizerCanvas || !canvasCtx || !audioCtx) return;
+
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        masterGain.connect(analyser);
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        function renderFrame() {
+            requestAnimationFrame(renderFrame);
+            analyser.getByteFrequencyData(dataArray);
+
+            canvasCtx.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
+
+            const barWidth = (visualizerCanvas.width / bufferLength) * 2.5;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = (dataArray[i] / 255) * visualizerCanvas.height;
+                canvasCtx.fillStyle = `rgba(252, 209, 22, ${dataArray[i] / 255 * 0.4})`;
+                canvasCtx.fillRect(x, visualizerCanvas.height - barHeight, barWidth, barHeight);
+                x += barWidth + 1;
+            }
+        }
+        renderFrame();
+    }
+
+    // ==========================================
+    // 7. NAVIGATION & SECTION SWITCHING
+    // ==========================================
+    const navButtons = document.querySelectorAll('.nav-btn, .action-trigger');
+    const sections = document.querySelectorAll('.content-section');
+
+    navButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetId = btn.getAttribute('data-target');
+            
+            sections.forEach(sec => {
+                if (sec.id === targetId) {
+                    sec.classList.add('active');
+                } else {
+                    sec.classList.remove('active');
+                }
+            });
+
+            document.querySelectorAll('.nav-btn').forEach(nb => {
+                nb.classList.toggle('active', nb.getAttribute('data-target') === targetId);
+            });
+
+            // Close mobile menu if open
+            if (hamburgerBtn && mainNav) {
+                hamburgerBtn.classList.remove('open');
+                mainNav.classList.remove('open');
+            }
         });
     });
 
-    clearRecBtn.addEventListener('click', () => {
-        recordedEvents = [];
-        recordedAudioChunks = [];
-        recordedAudioBlob = null;
-        playRecBtn.disabled = true;
-        clearRecBtn.disabled = true;
-        if (downloadBtn) downloadBtn.disabled = true;
-    });
-
-    // TRIGGER DOWNLOAD OF THE WEBM AUDIO FILE
-    if (downloadBtn) {
-        downloadBtn.addEventListener('click', () => {
-            if (!recordedAudioBlob) return;
-
-            const url = URL.createObjectURL(recordedAudioBlob);
-            const anchor = document.createElement('a');
-            anchor.href = url;
-            anchor.download = `begena-performance-${Date.now()}.webm`;
-            document.body.appendChild(anchor);
-            anchor.click();
-
-            // Clean up memory space
-            setTimeout(() => {
-                document.body.removeChild(anchor);
-                URL.revokeObjectURL(url);
-            }, 100);
+    // ==========================================
+    // 8. RESPONSIVE MOBILE TOGGLES
+    // ==========================================
+    // Hamburger Navigation Menu Toggle
+    if (hamburgerBtn && mainNav) {
+        hamburgerBtn.addEventListener('click', () => {
+            hamburgerBtn.classList.toggle('open');
+            mainNav.classList.toggle('open');
         });
     }
 
-    // METRONOME & GENERATIVE COMPOSITION ENGINE MODULES
-    document.getElementById('metronome-toggle').addEventListener('click', (e) => {
-        isMetronomeOn = !isMetronomeOn;
-        if (isMetronomeOn) {
-            e.target.innerText = "Metronome ON";
-            e.target.style.color = "var(--primary-gold)";
-            const tempoBpm = parseInt(document.getElementById('metronome-tempo').value) || 72;
-            const rateInterval = (60 / tempoBpm) * 1000;
-            
-            metronomeIntervalId = setInterval(() => {
-                if(audioCtx && !isMuted) {
-                    const clickOsc = audioCtx.createOscillator();
-                    const clickGain = audioCtx.createGain();
-                    clickOsc.type = 'sine';
-                    clickOsc.frequency.setValueAtTime(650, audioCtx.currentTime);
-                    clickGain.gain.setValueAtTime(0.12, audioCtx.currentTime);
-                    clickGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
-                    clickOsc.connect(clickGain);
-                    clickGain.connect(audioCtx.destination);
-                    clickOsc.start();
-                    clickOsc.stop(audioCtx.currentTime + 0.06);
-                }
-            }, rateInterval);
-        } else {
-            e.target.innerText = "Metronome OFF";
-            e.target.style.color = "inherit";
-            clearInterval(metronomeIntervalId);
+    // Collapsible Simulator Control Panel Toggle
+    if (togglePanelBtn && controlPanel) {
+        togglePanelBtn.addEventListener('click', () => {
+            controlPanel.classList.toggle('open');
+            if (controlPanel.classList.contains('open')) {
+                togglePanelBtn.innerText = '✕ Hide Controls';
+            } else {
+                togglePanelBtn.innerText = '⚙ Controls & Tuning Panel';
+            }
+        });
+    }
+
+    // ==========================================
+    // 9. HARDWARE KEYBOARD LISTENERS
+    // ==========================================
+    window.addEventListener('keydown', (e) => {
+        if (e.repeat) return;
+        const keyIndex = KEY_MAPPINGS.indexOf(e.key);
+        if (keyIndex !== -1) {
+            playStringSound(keyIndex);
         }
     });
 
-    document.getElementById('random-melody-btn').addEventListener('click', () => {
-        let iterations = 0;
-        const melodyInterval = setInterval(() => {
-            const randomString = Math.floor(Math.random() * 10);
-            triggerStringPluck(randomString);
-            iterations++;
-            if (iterations >= 12) clearInterval(melodyInterval);
-        }, 350);
-    });
+    // ==========================================
+    // 10. CONTROL PANEL EVENT BINDINGS
+    // ==========================================
+    if (themeSelector) {
+        themeSelector.addEventListener('change', (e) => {
+            document.body.setAttribute('data-theme', e.target.value);
+        });
+    }
 
-    document.getElementById('demo-btn').addEventListener('click', (e) => {
-        if (autoDemoIntervalId) {
-            clearInterval(autoDemoIntervalId);
-            autoDemoIntervalId = null;
-            e.target.innerText = "Auto Demo Mode";
-            e.target.style.background = "rgba(255,255,255,0.06)";
-        } else {
-            e.target.innerText = "Stop Demo Mode";
-            e.target.style.background = "var(--primary-green)";
-            // Traditional 4-beat meditative phrasing pattern loop
-            const traditionalPattern = [0, 3, 5, 3, 2, 5, 7, 5];
-            let patternIndex = 0;
-            autoDemoIntervalId = setInterval(() => {
-                triggerStringPluck(traditionalPattern[patternIndex]);
-                patternIndex = (patternIndex + 1) % traditionalPattern.length;
-            }, 450);
-        }
-    });
+    if (masterVolInput) {
+        masterVolInput.addEventListener('input', (e) => {
+            if (masterGain) masterGain.gain.value = parseFloat(e.target.value);
+        });
+    }
 
-    // UTILITY INTERFACE ENHANCEMENT SUITE
-    document.getElementById('fullscreen-btn').addEventListener('click', () => {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch(() => {});
-        } else {
-            document.exitFullscreen();
-        }
-    });
+    if (reverbInput) {
+        reverbInput.addEventListener('input', (e) => {
+            if (reverbGain) reverbGain.gain.value = parseFloat(e.target.value);
+        });
+    }
 
-    document.getElementById('screenshot-btn').addEventListener('click', () => {
-        alert("Configuration Saved: Theme: " + themeSelector.value + " | Strings Calibrated: 10 Channels Operational.");
-    });
+    if (bassInput) {
+        bassInput.addEventListener('input', (e) => {
+            if (bassFilter) bassFilter.gain.value = parseFloat(e.target.value);
+        });
+    }
 
-    // STARTUP RUNTIME EXECUTION
-    initializeStructure();
+    if (trebleInput) {
+        trebleInput.addEventListener('input', (e) => {
+            if (trebleFilter) trebleFilter.gain.value = parseFloat(e.target.value);
+        });
+    }
+
+    if (muteBtn) {
+        muteBtn.addEventListener('click', () => {
+            isMuted = !isMuted;
+            if (masterGain) {
+                masterGain.gain.value = isMuted ? 0 : parseFloat(masterVolInput.value);
+            }
+            muteBtn.innerText = isMuted ? 'Unmute Audio' : 'Mute Audio';
+        });
+    }
+
+    if (tuneDownBtn) {
+        tuneDownBtn.addEventListener('click', () => { pitchOffsetSemitones--; });
+    }
+    if (tuneResetBtn) {
+        tuneResetBtn.addEventListener('click', () => { pitchOffsetSemitones = 0; });
+    }
+    if (tuneUpBtn) {
+        tuneUpBtn.addEventListener('click', () => { pitchOffsetSemitones++; });
+    }
+
+    // Recorder Bindings
+    if (recordBtn) recordBtn.addEventListener('click', startRecording);
+    if (stopBtn) stopBtn.addEventListener('click', stopRecording);
+    if (downloadBtn) downloadBtn.addEventListener('click', downloadAudio);
+    if (playbackBtn) {
+        playbackBtn.addEventListener('click', () => {
+            if (audioBlobUrl) {
+                const audio = new Audio(audioBlobUrl);
+                audio.play();
+            }
+        });
+    }
+    if (clearRecBtn) {
+        clearRecBtn.addEventListener('click', () => {
+            audioBlobUrl = null;
+            recordedChunks = [];
+            if (playbackBtn) playbackBtn.disabled = true;
+            if (downloadBtn) downloadBtn.disabled = true;
+            if (clearRecBtn) clearRecBtn.disabled = true;
+        });
+    }
+
+    // Generative Melodies
+    if (randomMelodyBtn) {
+        randomMelodyBtn.addEventListener('click', () => {
+            const sequence = [0, 2, 3, 5, 7, 5, 3, 2, 0];
+            sequence.forEach((stringIdx, i) => {
+                setTimeout(() => {
+                    playStringSound(stringIdx);
+                }, i * 350);
+            });
+        });
+    }
+
+    // Initialize UI Component Structure
+    buildStringsUI();
 });
